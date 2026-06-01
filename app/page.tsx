@@ -126,11 +126,15 @@ export default function Home() {
           <span className="file-name">{fileName || "No file selected"}</span>
         </div>
         <p className="hint" style={{ marginBottom: 14 }}>
-          Required column: <code style={{ fontFamily: "var(--mono)" }}>igsid</code>. Optional:
-          event_name, event_time, value, currency, event_id, email, phone. Or paste below.
+          Required: <code style={{ fontFamily: "var(--mono)" }}>igsid</code> or{" "}
+          <code style={{ fontFamily: "var(--mono)" }}>instagram_id</code>. Optional:{" "}
+          <code style={{ fontFamily: "var(--mono)" }}>current_funnel_stage</code>{" "}
+          (QUALIFIED→Lead, BOOKED_CALL→Schedule, WON→Purchase),{" "}
+          <code style={{ fontFamily: "var(--mono)" }}>instagram_username</code>, event_name,
+          event_time, value, currency, event_id, email, phone. Or paste below.
         </p>
         <textarea
-          placeholder="igsid,event_name,event_time,value,currency,event_id,email,phone&#10;1784140...,Purchase,2026-05-01T14:30:00Z,5000,EUR,conv-0001,,"
+          placeholder="instagram_id,instagram_username,current_funnel_stage&#10;27560301066903568,alingheorghisor,BOOKED_CALL"
           value={csv}
           onChange={(e) => {
             setCsv(e.target.value);
