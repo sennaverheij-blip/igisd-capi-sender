@@ -53,52 +53,87 @@ function toUnix(ts?: string): number {
   return Math.floor(ms / 1000);
 }
 
+// Some exports (e.g. Google Sheets "download as CSV") wrap every entire row
+// in double quotes, turning the line into ONE quoted field. Detect and strip.
+function unwrapDoubleQuotedRows(text: string): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let wrapped = 0;
+  let nonEmpty = 0;
+  for (const ln of lines) {
+    if (!ln.trim()) continue;
+    nonEmpty++;
+    if (ln.length >= 2 && ln.startsWith('"') && ln.endsWith('"')) wrapped++;
+  }
+  if (nonEmpty === 0 || wrapped / nonEmpty < 0.8) return text;
+  return lines
+    .map((ln) =>
+      ln.length >= 2 && ln.startsWith('"') && ln.endsWith('"')
+        ? ln.slice(1, -1).replace(/""/g, '"')
+        : ln
+    )
+    .join("\n");
+}
+
+// Look up a CSV field by header name, case-insensitively, with all whitespace
+// collapsed. So "IGSID", "igsid", " Igsid " all match the same key.
+function pick(row: Row, ...names: string[]): string {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  const map: Record<string, string> = {};
+  for (const k of Object.keys(row)) map[norm(k)] = row[k];
+  for (const n of names) {
+    const v = map[norm(n)];
+    if (v != null && String(v).trim()) return String(v);
+  }
+  return "";
+}
+
 export function parseCsv(text: string): Row[] {
-  const res = Papa.parse<Row>(text.trim(), { header: true, skipEmptyLines: true });
+  const cleaned = unwrapDoubleQuotedRows(text.trim());
+  const res = Papa.parse<Row>(cleaned, { header: true, skipEmptyLines: true });
   return res.data;
 }
 
 export function buildEvent(row: Row, pageId: string): BuiltEvent | null {
-  // Accept either `igsid` or `instagram_id` as the IGSID column.
-  const igsid = (row.igsid || row.instagram_id || "").trim();
+  const igsid = pick(row, "igsid", "instagram_id", "ig_id", "page_scoped_user_id").trim();
   if (!igsid) return null; // no IGSID -> can't be matched, skip
 
   // Event name: explicit > stage-mapped > fallback.
-  const stage = (row.current_funnel_stage || row.stage || "").trim();
+  const stage = pick(row, "current_funnel_stage", "stage", "funnel_stage").trim();
   const mappedStage = stage ? mapStage(stage) : null;
   if (stage && !mappedStage) return null; // unknown stage -> skip rather than send garbage
-  const event_name =
-    (row.event_name && row.event_name.trim()) || mappedStage || "Lead";
+  const event_name = pick(row, "event_name").trim() || mappedStage || "Lead";
+
+  const email = pick(row, "email", "em").trim();
+  const phone = pick(row, "phone", "ph").trim();
 
   const user_data: Record<string, string> = {
     page_id: String(pageId),
     page_scoped_user_id: igsid,
   };
-  if (row.email && row.email.trim()) user_data.em = sha256(row.email);
-  if (row.phone && row.phone.trim()) user_data.ph = sha256(normPhone(row.phone));
+  if (email) user_data.em = sha256(email);
+  if (phone) user_data.ph = sha256(normPhone(phone));
 
   // Stable event_id so re-uploading the same CSV dedupes inside Meta's window.
   const stageTag = (mappedStage || event_name).toLowerCase();
-  const event_id =
-    (row.event_id && row.event_id.trim()) || `${igsid}-${stageTag}`;
+  const event_id = pick(row, "event_id").trim() || `${igsid}-${stageTag}`;
 
   const event: BuiltEvent = {
     event_name,
-    event_time: toUnix(row.event_time),
+    event_time: toUnix(pick(row, "event_time")),
     action_source: ACTION_SOURCE,
     messaging_channel: MESSAGING_CHANNEL,
     event_id,
     user_data,
   };
 
+  const value = pick(row, "value").trim();
+  const username = pick(row, "instagram_username", "username").trim();
   const custom_data: Record<string, any> = {};
-  if (row.value && row.value.trim()) {
-    custom_data.value = parseFloat(row.value);
-    custom_data.currency = (row.currency || "EUR").trim().toUpperCase();
+  if (value) {
+    custom_data.value = parseFloat(value);
+    custom_data.currency = (pick(row, "currency").trim() || "EUR").toUpperCase();
   }
-  if (row.instagram_username && row.instagram_username.trim()) {
-    custom_data.instagram_username = row.instagram_username.trim();
-  }
+  if (username) custom_data.instagram_username = username;
   if (stage) custom_data.funnel_stage = stage;
   if (Object.keys(custom_data).length > 0) event.custom_data = custom_data;
 
